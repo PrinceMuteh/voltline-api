@@ -1,6 +1,7 @@
 import type { ChargerStatus } from '../generated/prisma/enums.js';
 import type { SessionRecorder } from '../sessions/session-recorder.service.js';
 import type { ChargerStateService } from './charger-state.service.js';
+import type { ReservationsService } from './reservations.service.js';
 import { meterReadings, powerWatts } from './ocpp-messages.service.js';
 import type { ChargerClient } from './ocpp.types.js';
 
@@ -27,6 +28,7 @@ export function registerHandlers(
   client: ChargerClient,
   state: ChargerStateService,
   recorder: SessionRecorder,
+  reservations: ReservationsService,
   onPending: () => void,
 ) {
   const s = client.session;
@@ -112,6 +114,13 @@ export function registerHandlers(
                 p.eventType === 'Started' ? readings[0]?.registerWh : undefined,
             });
             const key = `seq:${p.seqNo}`;
+            if (typeof p.reservationId === 'number') {
+              await reservations.used(
+                s.chargerId,
+                s.workspaceId,
+                p.reservationId,
+              );
+            }
             if (p.eventType === 'Started') {
               await recorder.event(
                 session,
@@ -177,6 +186,15 @@ export function registerHandlers(
               p.idToken.type,
             );
             return { idTokenInfo: { status: ok ? 'Accepted' : 'Invalid' } };
+          },
+          ReservationStatusUpdate: async (p) => {
+            await reservations.statusUpdate(
+              s.chargerId,
+              s.workspaceId,
+              p.reservationId,
+              p.reservationUpdateStatus,
+            );
+            return {};
           },
           FirmwareStatusNotification: async () => ({}),
           SecurityEventNotification: async () => ({}),
@@ -255,6 +273,13 @@ export function registerHandlers(
               return { transactionId: 0, idTagInfo };
             }
             const at = new Date(p.timestamp as string);
+            if (typeof p.reservationId === 'number') {
+              await reservations.used(
+                s.chargerId,
+                s.workspaceId,
+                p.reservationId,
+              );
+            }
             const session = await recorder.startTransaction16(s, {
               evseId: p.connectorId,
               at,
@@ -318,7 +343,7 @@ export function registerHandlers(
 const STATUS_201: Record<string, ChargerStatus> = {
   Available: 'AVAILABLE',
   Occupied: 'CHARGING',
-  Reserved: 'AVAILABLE',
+  Reserved: 'RESERVED',
   Unavailable: 'UNAVAILABLE',
   Faulted: 'FAULTED',
 };
@@ -330,7 +355,7 @@ const STATUS_16: Record<string, ChargerStatus> = {
   SuspendedEVSE: 'CHARGING',
   SuspendedEV: 'CHARGING',
   Finishing: 'AVAILABLE',
-  Reserved: 'AVAILABLE',
+  Reserved: 'RESERVED',
   Unavailable: 'UNAVAILABLE',
   Faulted: 'FAULTED',
 };

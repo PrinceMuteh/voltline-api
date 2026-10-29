@@ -169,8 +169,26 @@ class ActiveSessionDto {
   @ApiProperty() energyWh: number;
 }
 
+class ReservationDto {
+  @ApiProperty() id: string;
+  @ApiProperty() evseId: number;
+  @ApiProperty({ example: '04:A2:1C:9F' }) idTag: string;
+  @ApiProperty({ type: String, nullable: true }) driver: string | null;
+  @ApiProperty({ format: 'date-time' }) expiresAt: string;
+  @ApiProperty({
+    enum: ['REQUESTED', 'ACTIVE', 'USED', 'CANCELLED', 'EXPIRED', 'REJECTED'],
+  })
+  status: string;
+  @ApiProperty({ type: String, nullable: true }) rejection: string | null;
+}
+
 export class ChargerDetailDto extends ChargerRowDto {
   @ApiProperty({ type: [ActiveSessionDto] }) activeSessions: ActiveSessionDto[];
+  @ApiProperty({ type: [ReservationDto] }) reservations: ReservationDto[];
+  @ApiProperty({ description: 'RFID list version last sent (0 = never)' })
+  localListVersion: number;
+  @ApiProperty({ type: String, nullable: true, format: 'date-time' })
+  localListSyncedAt: string | null;
   @ApiProperty({ type: String, nullable: true }) firmwareVersion: string | null;
   @ApiProperty({ example: 2 }) securityProfile: number;
   @ApiProperty({ example: 'wss://ocpp.voltline.example/ocpp/CP-0052' })
@@ -264,18 +282,6 @@ export class CommandResultDto {
   detail: string;
 }
 
-export class SiteDto {
-  @ApiProperty() id: string;
-  @ApiProperty({ example: 'Wuse II Mall' }) name: string;
-  @ApiProperty({ type: String, nullable: true, example: 'Wuse II, Abuja' })
-  area: string | null;
-  @ApiProperty({ type: String, nullable: true }) address: string | null;
-  @ApiProperty({ type: Number, nullable: true, example: 9.0765 }) latitude:
-    number | null;
-  @ApiProperty({ type: Number, nullable: true, example: 7.4886 }) longitude:
-    number | null;
-}
-
 export class NetworkDto {
   @ApiProperty({ description: 'Approved chargers with an open socket' })
   socketsConnected: number;
@@ -323,4 +329,40 @@ export class ConfigWriteResultDto {
     description: 'Accepted, Rejected, RebootRequired, NotSupported…',
   })
   status: string;
+}
+
+export class ReserveDto {
+  @ApiProperty({ default: 1 })
+  @IsInt()
+  @Min(1)
+  evseId: number;
+
+  @ApiProperty({ description: 'The RFID card the connector is held for' })
+  @IsUUID('all', { message: 'Choose a card.' })
+  idTokenId: string;
+
+  @ApiProperty({ example: 30 })
+  @IsInt()
+  @Min(5, { message: 'Hold it for at least 5 minutes.' })
+  @Max(240, { message: 'Hold it for at most 4 hours.' })
+  minutes: number;
+}
+
+export class ReserveResultDto {
+  @ApiProperty({ enum: ['ACTIVE', 'REJECTED'] }) status: string;
+  @ApiProperty() title: string;
+  @ApiProperty() detail: string;
+}
+
+export class LocalListResultDto {
+  @ApiProperty({ example: 'Accepted' }) status: string;
+  @ApiProperty() version: number;
+  @ApiProperty({ description: 'Cards in the list' }) entries: number;
+}
+
+export class IdTokenDto {
+  @ApiProperty() id: string;
+  @ApiProperty({ example: '04:A2:1C:9F' }) uid: string;
+  @ApiProperty({ type: String, nullable: true, example: 'Tunde Bakare' })
+  holder: string | null;
 }

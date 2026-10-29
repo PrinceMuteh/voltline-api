@@ -39,6 +39,7 @@ class ChargerCountsDto {
   online: number;
   @ApiProperty() charging: number;
   @ApiProperty() available: number;
+  @ApiProperty() reserved: number;
   @ApiProperty() faulted: number;
   @ApiProperty() offline: number;
   @ApiProperty() unavailable: number;

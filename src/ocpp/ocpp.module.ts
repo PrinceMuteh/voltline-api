@@ -6,8 +6,10 @@ import { CommandsService } from './commands.service.js';
 import { ConfigurationService } from './configuration.service.js';
 import { ConnectionRegistry } from './connection-registry.js';
 import { LivenessService } from './liveness.service.js';
+import { LocalListService } from './local-list.service.js';
 import { OcppMessagesService } from './ocpp-messages.service.js';
 import { OcppGateway } from './ocpp.gateway.js';
+import { ReservationsService } from './reservations.service.js';
 
 @Module({
   imports: [AlertsModule, SessionsModule],
@@ -19,6 +21,8 @@ import { OcppGateway } from './ocpp.gateway.js';
     OcppMessagesService,
     OcppGateway,
     LivenessService,
+    ReservationsService,
+    LocalListService,
   ],
   exports: [
     ConnectionRegistry,
@@ -27,6 +31,8 @@ import { OcppGateway } from './ocpp.gateway.js';
     ConfigurationService,
     OcppMessagesService,
     OcppGateway,
+    ReservationsService,
+    LocalListService,
   ],
 })
 export class OcppModule {}

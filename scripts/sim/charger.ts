@@ -49,6 +49,8 @@ interface Evse {
   inoperative: boolean;
   /** Battery %, reported by DC chargers (the car talks to them). */
   soc: number | null;
+  /** Held for one card by ReserveNow until it expires or is cancelled. */
+  reservation?: { id: number; idTag: string; timer: NodeJS.Timeout };
 }
 
 type Params = Record<string, any>;
@@ -70,6 +72,8 @@ export function startCharger(o: SimOptions) {
     inoperative: false,
     soc: null,
   }));
+  /** The RFID cards the CSMS sent with SendLocalList (used while offline on real hardware). */
+  let localList: { version: number; tags: string[] } = { version: 0, tags: [] };
   const dc = o.maxKw >= 50;
   let meterEvery = o.meterEverySec;
   /** Settings the console can read and change; meter intervals take effect at once. */
@@ -225,11 +229,13 @@ export function startCharger(o: SimOptions) {
         connectorStatus:
           evse.inoperative && evse.state !== 'charging'
             ? 'Unavailable'
-            : {
-                available: 'Available',
-                charging: 'Occupied',
-                faulted: 'Faulted',
-              }[evse.state],
+            : evse.reservation && evse.state === 'available'
+              ? 'Reserved'
+              : {
+                  available: 'Available',
+                  charging: 'Occupied',
+                  faulted: 'Faulted',
+                }[evse.state],
         evseId: evse.id,
         connectorId: 1,
       });
@@ -242,11 +248,13 @@ export function startCharger(o: SimOptions) {
           ? 'SuspendedEV'
           : evse.inoperative && evse.state !== 'charging'
             ? 'Unavailable'
-            : {
-                available: 'Available',
-                charging: 'Charging',
-                faulted: 'Faulted',
-              }[evse.state],
+            : evse.reservation && evse.state === 'available'
+              ? 'Reserved'
+              : {
+                  available: 'Available',
+                  charging: 'Charging',
+                  faulted: 'Faulted',
+                }[evse.state],
         timestamp: now(),
       });
     }
@@ -357,6 +365,13 @@ export function startCharger(o: SimOptions) {
     idTag: string | undefined,
     remoteStartId?: number,
   ) {
+    // A reserved connector is for its card: the reserved driver is the one who arrives
+    const reservationId = evse.reservation?.id;
+    if (evse.reservation) {
+      clearTimeout(evse.reservation.timer);
+      idTag = evse.reservation.idTag;
+      evse.reservation = undefined;
+    }
     const idToken = idTag ?? 'VOLTLINE-OPS';
     evse.state = 'charging';
     evse.idle = false;
@@ -397,6 +412,7 @@ export function startCharger(o: SimOptions) {
         },
         evse: { id: evse.id, connectorId: 1 },
         meterValue: begin,
+        ...(reservationId !== undefined ? { reservationId } : {}),
       });
     } else {
       await status(evse);
@@ -405,6 +421,7 @@ export function startCharger(o: SimOptions) {
         idTag: idToken,
         meterStart: evse.energyWh,
         timestamp: now(),
+        ...(reservationId !== undefined ? { reservationId } : {}),
       });
       evse.txId = res.transactionId as number;
     }
@@ -618,6 +635,69 @@ export function startCharger(o: SimOptions) {
     return { status: 'Accepted' };
   });
 
+  on('ReserveNow', (params) => {
+    const evse = evseFor(params.evseId ?? params.connectorId);
+    const id = Number(params.id ?? params.reservationId);
+    const idTag = String(params.idToken?.idToken ?? params.idTag);
+    const expires = Date.parse(
+      String(params.expiryDateTime ?? params.expiryDate),
+    );
+    if (!evse) return { status: 'Rejected' };
+    if (evse.state === 'faulted') return { status: 'Faulted' };
+    if (evse.inoperative) return { status: 'Unavailable' };
+    if (evse.state === 'charging' || evse.reservation)
+      return { status: 'Occupied' };
+    const timer = setTimeout(
+      () => {
+        if (evse.reservation?.id !== id) return;
+        evse.reservation = undefined;
+        log(`Reservation ${id} expired`);
+        void (async () => {
+          if (v201) {
+            await call('ReservationStatusUpdate', {
+              reservationId: id,
+              reservationUpdateStatus: 'Expired',
+            });
+          }
+          await status(evse);
+        })().catch(() => undefined);
+      },
+      Math.max(0, expires - Date.now()),
+    );
+    evse.reservation = { id, idTag, timer };
+    log(`Reserved EVSE ${evse.id} for ${idTag} (reservation ${id})`);
+    later(100, () => status(evse));
+    return { status: 'Accepted' };
+  });
+
+  on('CancelReservation', (params) => {
+    const evse = evses.find(
+      (e) => e.reservation?.id === Number(params.reservationId),
+    );
+    if (!evse?.reservation) return { status: 'Rejected' };
+    clearTimeout(evse.reservation.timer);
+    evse.reservation = undefined;
+    log(`Reservation ${String(params.reservationId)} cancelled`);
+    later(100, () => status(evse));
+    return { status: 'Accepted' };
+  });
+
+  on('SendLocalList', (params) => {
+    const entries = (params.localAuthorizationList ?? []) as Params[];
+    localList = {
+      version: Number(params.versionNumber ?? params.listVersion),
+      tags: entries.map((e) => String(e.idToken?.idToken ?? e.idTag)),
+    };
+    log(`Local list v${localList.version}: ${localList.tags.length} cards`);
+    return { status: 'Accepted' };
+  });
+
+  on('GetLocalListVersion', () =>
+    v201
+      ? { versionNumber: localList.version }
+      : { listVersion: localList.version },
+  );
+
   on('UnlockConnector', () => {
     log('UnlockConnector');
     return { status: 'Unlocked' };
@@ -628,7 +708,13 @@ export function startCharger(o: SimOptions) {
     idToken: string,
     remoteStartId?: number,
   ) => {
-    if (!evse || evse.state !== 'available' || evse.inoperative) {
+    if (
+      !evse ||
+      evse.state !== 'available' ||
+      evse.inoperative ||
+      // Reserved for another card
+      (evse.reservation && evse.reservation.idTag !== idToken)
+    ) {
       return { status: 'Rejected' };
     }
     later(200, () => startTx(evse, idToken, remoteStartId));

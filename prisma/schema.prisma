@@ -138,6 +138,8 @@ model Site {
   latitude     Float?
   longitude    Float?
   openingHours String   @default("Open 24 hours")
+  /// Most the site's grid connection can supply, kW (for load limits later)
+  gridLimitKw  Int?
   createdAt    DateTime @default(now())
 
   workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -165,6 +167,7 @@ enum ApprovalState {
 
 enum ChargerStatus {
   AVAILABLE
+  RESERVED
   CHARGING
   FAULTED
   OFFLINE
@@ -178,28 +181,32 @@ enum ConnectorType {
 }
 
 model Charger {
-  id              String        @id @default(uuid())
-  workspaceId     String
-  siteId          String
-  chargePointId   String // e.g. CP-0052; last segment of the OCPP URL
-  vendor          String?
-  model           String?
-  firmwareVersion String?
-  protocol        OcppProtocol?
-  securityProfile Int           @default(2)
-  approval        ApprovalState @default(PENDING)
-  status          ChargerStatus @default(OFFLINE)
-  lastSeenAt      DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                String        @id @default(uuid())
+  workspaceId       String
+  siteId            String
+  chargePointId     String // e.g. CP-0052; last segment of the OCPP URL
+  vendor            String?
+  model             String?
+  firmwareVersion   String?
+  protocol          OcppProtocol?
+  securityProfile   Int           @default(2)
+  approval          ApprovalState @default(PENDING)
+  status            ChargerStatus @default(OFFLINE)
+  lastSeenAt        DateTime?
+  /// Version of the RFID list last sent with SendLocalList (0 = never)
+  localListVersion  Int           @default(0)
+  localListSyncedAt DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
-  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  site        Site                @relation(fields: [siteId], references: [id])
-  evses       Evse[]
-  credentials ChargerCredential[]
-  sessions    Session[]
-  messages    OcppMessage[]
-  commands    RemoteCommand[]
+  workspace    Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  site         Site                @relation(fields: [siteId], references: [id])
+  evses        Evse[]
+  credentials  ChargerCredential[]
+  sessions     Session[]
+  messages     OcppMessage[]
+  commands     RemoteCommand[]
+  reservations Reservation[]
 
   // Unique across the platform: the gateway resolves a charger from its URL alone
   @@unique([chargePointId])
@@ -259,6 +266,39 @@ model OcppMessage {
   charger Charger @relation(fields: [chargerId], references: [id], onDelete: Cascade)
 
   @@index([chargerId, at])
+}
+
+enum ReservationStatus {
+  REQUESTED
+  ACTIVE
+  USED
+  CANCELLED
+  EXPIRED
+  REJECTED
+}
+
+/// A connector held for one card until expiresAt (ReserveNow / CancelReservation)
+model Reservation {
+  id          String            @id @default(uuid())
+  workspaceId String
+  chargerId   String
+  evseId      Int
+  /// The id the charger knows it by (ReserveNow.id / reservationId)
+  ocppId      Int
+  idTag       String
+  idTokenId   String?
+  expiresAt   DateTime
+  status      ReservationStatus @default(REQUESTED)
+  /// The charger's answer when it refused: Occupied, Faulted, Unavailable, Rejected
+  rejection   String?
+  requestedBy String?
+  createdAt   DateTime          @default(now())
+
+  charger Charger  @relation(fields: [chargerId], references: [id], onDelete: Cascade)
+  idToken IdToken? @relation(fields: [idTokenId], references: [id])
+
+  @@unique([chargerId, ocppId])
+  @@index([workspaceId, status])
 }
 
 enum CommandStatus {
@@ -352,10 +392,11 @@ model IdToken {
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  driver    Driver?   @relation(fields: [driverId], references: [id])
-  fleet     Fleet?    @relation(fields: [fleetId], references: [id])
-  sessions  Session[]
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  driver       Driver?       @relation(fields: [driverId], references: [id])
+  fleet        Fleet?        @relation(fields: [fleetId], references: [id])
+  sessions     Session[]
+  reservations Reservation[]
 
   @@unique([workspaceId, uid])
 }

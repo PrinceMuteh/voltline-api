@@ -377,11 +377,12 @@ export class ChargerStateService {
   }
 }
 
-/** One status for the whole charger: a fault wins, then charging, then available. */
+/** One status for the whole charger: a fault wins, then charging, reserved, available. */
 export function aggregate(statuses: ChargerStatus[]): ChargerStatus {
   for (const s of [
     'FAULTED',
     'CHARGING',
+    'RESERVED',
     'AVAILABLE',
     'UNAVAILABLE',
   ] as const) {

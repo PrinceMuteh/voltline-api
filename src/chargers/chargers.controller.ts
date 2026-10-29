@@ -23,12 +23,18 @@ import {
 } from '../auth/auth.decorators.js';
 import { CommandsService } from '../ocpp/commands.service.js';
 import { ConfigurationService } from '../ocpp/configuration.service.js';
+import { LocalListService } from '../ocpp/local-list.service.js';
+import { ReservationsService } from '../ocpp/reservations.service.js';
 import { ChargersService } from './chargers.service.js';
 import {
   ChargerDetailDto,
   ChargerRowDto,
   CommandDto,
   ConfigItemDto,
+  IdTokenDto,
+  LocalListResultDto,
+  ReserveDto,
+  ReserveResultDto,
   ConfigWriteDto,
   ConfigWriteResultDto,
   CommandResultDto,
@@ -41,7 +47,6 @@ import {
   NextIdDto,
   OcppMessageDto,
   PasswordDto,
-  SiteDto,
   UpdateChargerDto,
 } from './dto/charger.dto.js';
 
@@ -55,6 +60,8 @@ export class ChargersController {
     private readonly chargers: ChargersService,
     private readonly commands: CommandsService,
     private readonly configuration: ConfigurationService,
+    private readonly reservations: ReservationsService,
+    private readonly localList: LocalListService,
   ) {}
 
   @Get('chargers')
@@ -181,6 +188,48 @@ export class ChargersController {
     return this.configuration.write(auth, id, dto);
   }
 
+  /** Holds a connector for one card (ReserveNow); the charger must be connected. */
+  @Post('chargers/:id/reservations')
+  @HttpCode(200)
+  @Roles('ADMIN', 'OPERATOR', 'SUPPORT')
+  @ApiOkResponse({ type: ReserveResultDto })
+  reserve(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', uuid) id: string,
+    @Body() dto: ReserveDto,
+  ) {
+    return this.reservations.reserve(auth, id, dto);
+  }
+
+  @Post('chargers/:id/reservations/:reservationId/cancel')
+  @HttpCode(204)
+  @Roles('ADMIN', 'OPERATOR', 'SUPPORT')
+  cancelReservation(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', uuid) id: string,
+    @Param('reservationId', uuid) reservationId: string,
+  ) {
+    return this.reservations.cancel(auth, id, reservationId);
+  }
+
+  /** Sends the active RFID cards now (also sent automatically when a charger connects). */
+  @Post('chargers/:id/local-list/sync')
+  @HttpCode(200)
+  @Roles('ADMIN', 'OPERATOR')
+  @ApiOkResponse({ type: LocalListResultDto })
+  syncLocalList(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', uuid) id: string,
+  ) {
+    return this.localList.syncFromConsole(auth, id);
+  }
+
+  @Get('id-tokens')
+  @ApiOkResponse({ type: [IdTokenDto] })
+  idTokens(@CurrentAuth() auth: AuthContext) {
+    return this.chargers.idTokens(auth);
+  }
+
   /** Stop from the session drawer; answers like any other command. */
   @Post('sessions/:id/stop')
   @HttpCode(200)
@@ -194,11 +243,5 @@ export class ChargersController {
   @ApiOkResponse({ type: NetworkDto })
   network(@CurrentAuth() auth: AuthContext) {
     return this.chargers.network(auth);
-  }
-
-  @Get('sites')
-  @ApiOkResponse({ type: [SiteDto] })
-  sites(@CurrentAuth() auth: AuthContext) {
-    return this.chargers.sites(auth);
   }
 }

@@ -13,6 +13,8 @@ import { TLSSocket } from 'node:tls';
 import { RPCServer } from 'ocpp-rpc';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { SessionRecorder } from '../sessions/session-recorder.service.js';
+import { LocalListService } from './local-list.service.js';
+import { ReservationsService } from './reservations.service.js';
 import { ChargerStateService } from './charger-state.service.js';
 import { CommandsService } from './commands.service.js';
 import { ConnectionRegistry } from './connection-registry.js';
@@ -60,6 +62,8 @@ export class OcppGateway implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly commands: CommandsService,
     private readonly messages: OcppMessagesService,
     private readonly recorder: SessionRecorder,
+    private readonly reservations: ReservationsService,
+    private readonly localList: LocalListService,
   ) {}
 
   onApplicationBootstrap() {
@@ -212,20 +216,44 @@ export class OcppGateway implements OnApplicationBootstrap, OnModuleDestroy {
       this.logger.log(`${s.chargePointId} disconnected`);
     });
 
-    registerHandlers(client, this.state, this.recorder, () => {
-      // While Pending, the charger only talks when asked; ask it for its connectors
-      setTimeout(() => void this.requestStatus(client), 500);
-    });
+    registerHandlers(
+      client,
+      this.state,
+      this.recorder,
+      this.reservations,
+      () => {
+        // While Pending, the charger only talks when asked; ask it for its connectors
+        setTimeout(() => void this.requestStatus(client), 500);
+      },
+    );
 
     await this.state.connected(s);
     this.logger.log(`${s.chargePointId} connected over ${s.protocol}`);
 
     const charger = await this.prisma.charger.findUnique({
       where: { id: s.chargerId },
-      select: { approval: true },
+      select: {
+        approval: true,
+        workspace: {
+          select: { ocppConfig: { select: { syncLocalLists: true } } },
+        },
+      },
     });
     if (charger?.approval === 'ACCEPTED') {
-      setTimeout(() => void this.commands.flush(s.chargerId), 2_000);
+      setTimeout(() => {
+        void this.commands.flush(s.chargerId).then(async () => {
+          // Cards keep working offline only if the charger holds the current list
+          if (charger.workspace.ocppConfig?.syncLocalLists ?? true) {
+            await this.localList
+              .sync(s.chargerId)
+              .catch((error: unknown) =>
+                this.logger.warn(
+                  `SendLocalList to ${s.chargePointId}: ${String(error)}`,
+                ),
+              );
+          }
+        });
+      }, 2_000);
     }
   }
 

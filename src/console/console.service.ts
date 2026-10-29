@@ -124,9 +124,10 @@ export class ConsoleService {
       chargers: {
         total: approved.length,
         // Usable by drivers right now, as on the Overview tile ("6 / 8 · 1 faulted · 1 offline")
-        online: count('CHARGING') + count('AVAILABLE'),
+        online: count('CHARGING') + count('AVAILABLE') + count('RESERVED'),
         charging: count('CHARGING'),
         available: count('AVAILABLE'),
+        reserved: count('RESERVED'),
         faulted: count('FAULTED'),
         offline: count('OFFLINE'),
         unavailable: count('UNAVAILABLE'),

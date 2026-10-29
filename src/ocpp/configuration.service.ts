@@ -148,6 +148,44 @@ export class ConfigurationService {
     }
   }
 
+  /** Settings › OCPP "Meter values every": pushed to every connected charger of the workspace. */
+  async applyMeterInterval(workspaceId: string, seconds: number) {
+    const chargers = await this.prisma.charger.findMany({
+      where: { workspaceId, approval: 'ACCEPTED' },
+      select: { id: true },
+    });
+    let updated = 0;
+    for (const { id } of chargers) {
+      const client = this.registry.get(id);
+      if (!client) continue;
+      const ok = await (
+        client.session.protocol === 'ocpp1.6'
+          ? client.call(
+              'ChangeConfiguration',
+              { key: 'MeterValueSampleInterval', value: String(seconds) },
+              { callTimeoutMs: TIMEOUT_MS },
+            )
+          : client.call(
+              'SetVariables',
+              {
+                setVariableData: [
+                  {
+                    component: { name: 'SampledDataCtrlr' },
+                    variable: { name: 'TxUpdatedInterval' },
+                    attributeValue: String(seconds),
+                  },
+                ],
+              },
+              { callTimeoutMs: TIMEOUT_MS },
+            )
+      )
+        .then(() => true)
+        .catch(() => false);
+      if (ok) updated++;
+    }
+    return updated;
+  }
+
   private async client(
     auth: AuthContext,
     chargerId: string,

@@ -13,6 +13,7 @@ import { ChargerStateService } from '../ocpp/charger-state.service.js';
 import { ConnectionRegistry } from '../ocpp/connection-registry.js';
 import { OcppGateway } from '../ocpp/ocpp.gateway.js';
 import { OcppMessagesService } from '../ocpp/ocpp-messages.service.js';
+import { ReservationsService } from '../ocpp/reservations.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RealtimeGateway } from '../realtime/realtime.gateway.js';
 import {
@@ -54,6 +55,7 @@ export class ChargersService {
     private readonly messages: OcppMessagesService,
     private readonly gateway: OcppGateway,
     private readonly realtime: RealtimeGateway,
+    private readonly reservations: ReservationsService,
   ) {}
 
   async list(auth: AuthContext): Promise<ChargerRowDto[]> {
@@ -90,6 +92,9 @@ export class ChargersService {
         startedAt: s.startedAt.toISOString(),
         energyWh: s.energyWh,
       })),
+      reservations: await this.reservations.active(auth, charger.id),
+      localListVersion: charger.localListVersion,
+      localListSyncedAt: charger.localListSyncedAt?.toISOString() ?? null,
       firmwareVersion: charger.firmwareVersion,
       securityProfile: charger.securityProfile,
       ocppUrl: `${this.ocppBaseUrl()}/${encodeURIComponent(charger.chargePointId)}`,
@@ -225,6 +230,23 @@ export class ChargersService {
     return this.detail(auth, id);
   }
 
+  /** Cards that can be reserved for, with who holds them. */
+  async idTokens(auth: AuthContext) {
+    const cards = await this.prisma.idToken.findMany({
+      where: { workspaceId: auth.workspaceId, active: true },
+      include: {
+        driver: { select: { name: true } },
+        fleet: { select: { name: true } },
+      },
+      orderBy: { uid: 'asc' },
+    });
+    return cards.map((c) => ({
+      id: c.id,
+      uid: c.uid,
+      holder: c.driver?.name ?? c.fleet?.name ?? null,
+    }));
+  }
+
   async searchMessages(auth: AuthContext, id: string, f: MessageSearchDto) {
     await this.find(auth, id);
     return this.messages.search(id, f);
@@ -255,21 +277,6 @@ export class ChargersService {
       chargers: approved.length,
       openAlerts,
     };
-  }
-
-  async sites(auth: AuthContext) {
-    return this.prisma.site.findMany({
-      where: { workspaceId: auth.workspaceId },
-      select: {
-        id: true,
-        name: true,
-        area: true,
-        address: true,
-        latitude: true,
-        longitude: true,
-      },
-      orderBy: { name: 'asc' },
-    });
   }
 
   /** Workspace-scoped lookup; anything outside the workspace is a 404. */

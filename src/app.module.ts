@@ -12,6 +12,8 @@ import { OcppModule } from './ocpp/ocpp.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RealtimeModule } from './realtime/realtime.module.js';
 import { SessionsModule } from './sessions/sessions.module.js';
+import { SettingsModule } from './settings/settings.module.js';
+import { SitesModule } from './sites/sites.module.js';
 import { TariffsModule } from './tariffs/tariffs.module.js';
 
 @Module({
@@ -29,6 +31,8 @@ import { TariffsModule } from './tariffs/tariffs.module.js';
     OcppModule,
     ChargersModule,
     SessionsModule,
+    SitesModule,
+    SettingsModule,
     TariffsModule,
     ConsoleModule,
   ],

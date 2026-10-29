@@ -8,6 +8,7 @@ import { AlertsService } from '../alerts/alerts.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RealtimeGateway } from '../realtime/realtime.gateway.js';
 import { ChargerStateService } from './charger-state.service.js';
+import { ReservationsService } from './reservations.service.js';
 
 const SWEEP_EVERY_MS = 30_000;
 const PRUNE_EVERY_MS = 60 * 60_000;
@@ -28,6 +29,7 @@ export class LivenessService implements OnModuleInit, OnModuleDestroy {
     private readonly alerts: AlertsService,
     private readonly realtime: RealtimeGateway,
     private readonly state: ChargerStateService,
+    private readonly reservations: ReservationsService,
   ) {}
 
   onModuleInit() {
@@ -42,6 +44,7 @@ export class LivenessService implements OnModuleInit, OnModuleDestroy {
   }
 
   async sweep(now = new Date()) {
+    await this.reservations.expireOverdue();
     const candidates = await this.prisma.charger.findMany({
       where: {
         approval: 'ACCEPTED',
