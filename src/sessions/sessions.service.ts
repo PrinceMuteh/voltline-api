@@ -122,9 +122,17 @@ export class SessionsService {
     };
   }
 
-  async detail(auth: AuthContext, id: string): Promise<SessionDetailDto> {
+  detail(auth: AuthContext, id: string): Promise<SessionDetailDto> {
+    return this.detailInWorkspace(auth.workspaceId, id);
+  }
+
+  /** Also used by the driver app, which checks the session is the driver's own. */
+  async detailInWorkspace(
+    workspaceId: string,
+    id: string,
+  ): Promise<SessionDetailDto> {
     const session = await this.prisma.session.findFirst({
-      where: { id, workspaceId: auth.workspaceId },
+      where: { id, workspaceId },
       include: {
         ...rowInclude,
         samples: { orderBy: { at: 'asc' } },

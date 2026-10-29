@@ -46,9 +46,19 @@ const FIRST_REFERENCE = 10_474;
  * idempotent: events are keyed (2.0.1 seqNo, 1.6J timestamps), meter samples by time, and
  * a session is settled once. A charger replaying its queue after a reconnect changes nothing.
  */
+type BudgetHandler = (session: Session, evseId: number) => Promise<void>;
+
 @Injectable()
 export class SessionRecorder {
   private readonly logger = new Logger(SessionRecorder.name);
+  private budgetHandler?: BudgetHandler;
+  /** Sessions already asked to stop for their budget, so the stop is sent once. */
+  private readonly budgetStopped = new Set<string>();
+
+  /** The commands service registers how to stop a session (it owns the sockets). */
+  onBudgetReached(handler: BudgetHandler) {
+    this.budgetHandler = handler;
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -176,6 +186,9 @@ export class SessionRecorder {
       sessionId: session.id,
       energyWh: updated.energyWh,
     });
+    if (!updated.endedAt && updated.driverId) {
+      await this.checkBudget(c, updated);
+    }
     // A late reading for a session that already ended (out-of-order replay) re-prices it
     return updated.endedAt ? this.settle(c, updated) : updated;
   }
@@ -297,6 +310,56 @@ export class SessionRecorder {
         `${old.reference} closed: superseded by ${session.reference}`,
       );
     }
+  }
+
+  /** Auto-stop: once the running cost reaches the driver's budget, ask the charger to stop. */
+  private async checkBudget(c: ChargerRef, session: Session) {
+    if (!this.budgetHandler || this.budgetStopped.has(session.id)) return;
+    const [driver, tariff, workspace, connector] = await Promise.all([
+      this.prisma.driver.findUnique({
+        where: { id: session.driverId! },
+        select: { autoStopKobo: true },
+      }),
+      session.tariffId
+        ? this.prisma.tariff.findUnique({ where: { id: session.tariffId } })
+        : null,
+      this.prisma.workspace.findUniqueOrThrow({
+        where: { id: c.workspaceId },
+        select: { timeZone: true },
+      }),
+      session.connectorId
+        ? this.prisma.connector.findUnique({
+            where: { id: session.connectorId },
+            include: { evse: true },
+          })
+        : null,
+    ]);
+    if (!driver?.autoStopKobo || !tariff) return;
+    const minutes = Math.round(
+      (Date.now() - session.startedAt.getTime()) / 60_000,
+    );
+    const cost = price(tariff, {
+      energyWh: session.energyWh,
+      chargingMinutes: minutes,
+      pluggedMinutes: minutes,
+      atPeak: inPeakWindow(
+        tariff,
+        minuteOfDay(session.startedAt, workspace.timeZone),
+      ),
+    }).totalKobo;
+    if (cost < driver.autoStopKobo) return;
+    this.budgetStopped.add(session.id);
+    await this.event(
+      session,
+      'budget',
+      'BudgetReached',
+      new Date(),
+      `Auto-stop at ₦${(driver.autoStopKobo / 100).toLocaleString('en-NG')}`,
+    );
+    await this.budgetHandler(session, connector?.evse.evseId ?? 1).catch(
+      (error: unknown) =>
+        this.logger.warn(`Auto-stop ${session.reference}: ${String(error)}`),
+    );
   }
 
   /** Prices an ended session with its tariff version and stores the breakdown. */

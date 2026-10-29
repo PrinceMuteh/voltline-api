@@ -48,6 +48,11 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   OCPP_PUBLIC_URL?: string;
+
+  /** The workspace the driver app belongs to (one app per operator). */
+  @IsOptional()
+  @IsString()
+  DRIVER_APP_WORKSPACE?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

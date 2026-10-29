@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { ChargersModule } from './chargers/chargers.module.js';
 import { validateEnv } from './config/env.validation.js';
 import { ConsoleModule } from './console/console.module.js';
+import { DriverModule } from './driver/driver.module.js';
 import { HealthController } from './health/health.controller.js';
 import { OcppModule } from './ocpp/ocpp.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
@@ -35,6 +36,7 @@ import { TariffsModule } from './tariffs/tariffs.module.js';
     SettingsModule,
     TariffsModule,
     ConsoleModule,
+    DriverModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

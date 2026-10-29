@@ -4,12 +4,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { createRequire } from 'node:module';
 import type { AuthContext } from '../auth/auth.decorators.js';
 import type { RemoteCommand } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RealtimeGateway } from '../realtime/realtime.gateway.js';
+import { SessionRecorder } from '../sessions/session-recorder.service.js';
 import { ConnectionRegistry } from './connection-registry.js';
 import { OPERATOR_ID_TAG, type ChargerClient } from './ocpp.types.js';
 
@@ -29,7 +31,16 @@ interface CommandPayload {
   evseId: number;
   /** remote-stop: the charger's id for the running transaction. */
   transactionId?: string;
+  /** remote-start: the driver's token; the console uses its own tag. */
+  idTag?: string;
 }
+
+/** What the driver app needs to know about a command it sent. */
+export type DirectOutcome =
+  | { outcome: 'ACCEPTED' }
+  | { outcome: 'REJECTED'; reply: string }
+  | { outcome: 'NO_RESPONSE' }
+  | { outcome: 'OFFLINE' };
 
 export interface CommandResult {
   id: string;
@@ -54,7 +65,7 @@ const QUEUE_TTL_MS = 24 * 60 * 60_000;
  * answer within 30 s, or is offline, it stays queued and is sent when the charger reconnects.
  */
 @Injectable()
-export class CommandsService {
+export class CommandsService implements OnModuleInit {
   private readonly logger = new Logger(CommandsService.name);
   private remoteStartId = Math.floor(Date.now() / 1000) % 1_000_000;
 
@@ -62,7 +73,85 @@ export class CommandsService {
     private readonly prisma: PrismaService,
     private readonly registry: ConnectionRegistry,
     private readonly realtime: RealtimeGateway,
+    private readonly recorder: SessionRecorder,
   ) {}
+
+  onModuleInit() {
+    // A driver's budget reached: stop the session, as if they had tapped stop
+    this.recorder.onBudgetReached(async (session, evseId) => {
+      const result = await this.sendNow(
+        session.chargerId,
+        'remote-stop',
+        { evseId, transactionId: session.transactionId },
+        'auto-stop',
+      );
+      this.logger.log(`Auto-stop ${session.reference}: ${result.outcome}`);
+    });
+  }
+
+  /**
+   * For the driver app: sent at once or not at all. Nothing is queued, because a driver
+   * standing at the charger must hear "offline" or "no response" now, not later.
+   */
+  async sendNow(
+    chargerId: string,
+    kind: CommandKind,
+    extra: { evseId: number; transactionId?: string; idTag?: string },
+    requestedBy: string,
+  ): Promise<DirectOutcome> {
+    const client = this.registry.get(chargerId);
+    if (!client) {
+      return { outcome: 'OFFLINE' };
+    }
+    const payload: CommandPayload = { kind, ...extra };
+    const command = await this.prisma.remoteCommand.create({
+      data: {
+        chargerId,
+        action: actionName(kind),
+        payload: { ...payload },
+        requestedBy,
+        status: 'SENT',
+      },
+    });
+    const method =
+      client.session.protocol === 'ocpp1.6'
+        ? (ACTION_16[kind] ?? actionName(kind))
+        : actionName(kind);
+    try {
+      const response = (await client.call(
+        method,
+        this.params(client, payload),
+        { callTimeoutMs: TIMEOUT_MS },
+      )) as { status?: string };
+      const status = response.status ?? 'Accepted';
+      const ok = ['Accepted', 'Scheduled', 'Unlocked'].includes(status);
+      await this.prisma.remoteCommand.update({
+        where: { id: command.id },
+        data: {
+          status: ok ? 'ACCEPTED' : 'REJECTED',
+          response,
+          completedAt: new Date(),
+        },
+      });
+      return ok
+        ? { outcome: 'ACCEPTED' }
+        : { outcome: 'REJECTED', reply: status };
+    } catch (error) {
+      await this.prisma.remoteCommand.update({
+        where: { id: command.id },
+        data: {
+          status: 'CANCELLED',
+          response: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+          completedAt: new Date(),
+        },
+      });
+      return error instanceof TimeoutError
+        ? { outcome: 'NO_RESPONSE' }
+        : { outcome: 'REJECTED', reply: 'Error' };
+    }
+  }
 
   async run(
     auth: AuthContext,
@@ -254,11 +343,14 @@ export class CommandsService {
       case 'remote-start':
         return v201
           ? {
-              idToken: { idToken: OPERATOR_ID_TAG, type: 'Central' },
+              idToken: {
+                idToken: payload.idTag ?? OPERATOR_ID_TAG,
+                type: 'Central',
+              },
               remoteStartId: ++this.remoteStartId,
               evseId,
             }
-          : { idTag: OPERATOR_ID_TAG, connectorId: evseId };
+          : { idTag: payload.idTag ?? OPERATOR_ID_TAG, connectorId: evseId };
       case 'unlock':
         return v201 ? { evseId, connectorId: 1 } : { connectorId: evseId };
       case 'soft-reset':

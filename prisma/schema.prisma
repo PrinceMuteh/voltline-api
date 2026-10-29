@@ -349,15 +349,17 @@ enum DriverStatus {
 }
 
 model Driver {
-  id          String          @id @default(uuid())
-  workspaceId String
-  name        String?
-  phone       String // E.164, e.g. +2348030004412
-  email       String?
-  plugTypes   ConnectorType[]
-  status      DriverStatus    @default(ACTIVE)
-  fleetId     String?
-  createdAt   DateTime        @default(now())
+  id           String          @id @default(uuid())
+  workspaceId  String
+  name         String?
+  phone        String // E.164, e.g. +2348030004412
+  email        String?
+  plugTypes    ConnectorType[]
+  status       DriverStatus    @default(ACTIVE)
+  /// The app stops a session when its cost reaches this (kobo); null = no limit
+  autoStopKobo Int?            @default(1500000)
+  fleetId      String?
+  createdAt    DateTime        @default(now())
 
   workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   fleet     Fleet?         @relation(fields: [fleetId], references: [id])
@@ -653,4 +655,16 @@ model Lead {
   interest  String?
   message   String?
   createdAt DateTime @default(now())
+}
+
+/// A 6-digit sign-in code for the driver app; only its hash is kept, and it is deleted once used
+model OtpCode {
+  id        String   @id @default(uuid())
+  phone     String
+  codeHash  String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phone, createdAt])
 }
