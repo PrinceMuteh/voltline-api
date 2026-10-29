@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
 import {
   ApiCookieAuth,
@@ -34,6 +35,8 @@ import {
   ConnectCheckDto,
   CreateChargerDto,
   CreatedChargerDto,
+  MessagePageDto,
+  MessageSearchDto,
   NetworkDto,
   NextIdDto,
   OcppMessageDto,
@@ -113,6 +116,17 @@ export class ChargersController {
     @Param('id', uuid) id: string,
   ) {
     return this.chargers.connectCheck(auth, id);
+  }
+
+  /** The searchable OCPP log (OC-12), kept 90 days. */
+  @Get('chargers/:id/messages/search')
+  @ApiOkResponse({ type: MessagePageDto })
+  searchMessages(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', uuid) id: string,
+    @Query() query: MessageSearchDto,
+  ) {
+    return this.chargers.searchMessages(auth, id, query);
   }
 
   @Get('chargers/:id/messages')

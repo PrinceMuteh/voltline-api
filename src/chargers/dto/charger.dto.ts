@@ -11,6 +11,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -212,6 +213,46 @@ export class OcppMessageDto {
   @ApiProperty({ enum: ['INBOUND', 'OUTBOUND'] }) direction: string;
   @ApiProperty({ example: 'MeterValues' }) action: string;
   @ApiProperty({ example: 'Power.Active.Import 7.2 kW' }) summary: string;
+  @ApiProperty({ type: 'object', additionalProperties: true })
+  payload: Record<string, unknown>;
+}
+
+export class MessageSearchDto {
+  @ApiPropertyOptional({ description: 'Text in the action or the raw payload' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  q?: string;
+
+  @ApiPropertyOptional({ example: 'StatusNotification' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  action?: string;
+
+  @ApiPropertyOptional({ enum: ['INBOUND', 'OUTBOUND'] })
+  @IsOptional()
+  @IsIn(['INBOUND', 'OUTBOUND'])
+  direction?: 'INBOUND' | 'OUTBOUND';
+
+  @ApiPropertyOptional({
+    format: 'date-time',
+    description: 'Older than this (the previous page’s nextBefore)',
+  })
+  @IsOptional()
+  @IsISO8601()
+  before?: string;
+}
+
+export class MessagePageDto {
+  @ApiProperty({ type: [OcppMessageDto] }) messages: OcppMessageDto[];
+  @ApiProperty({ type: String, nullable: true, format: 'date-time' })
+  nextBefore: string | null;
+  @ApiProperty({
+    type: [String],
+    description: 'Actions seen on this charger (first page only)',
+  })
+  actions: string[];
 }
 
 export class CommandResultDto {
@@ -228,6 +269,11 @@ export class SiteDto {
   @ApiProperty({ example: 'Wuse II Mall' }) name: string;
   @ApiProperty({ type: String, nullable: true, example: 'Wuse II, Abuja' })
   area: string | null;
+  @ApiProperty({ type: String, nullable: true }) address: string | null;
+  @ApiProperty({ type: Number, nullable: true, example: 9.0765 }) latitude:
+    number | null;
+  @ApiProperty({ type: Number, nullable: true, example: 7.4886 }) longitude:
+    number | null;
 }
 
 export class NetworkDto {

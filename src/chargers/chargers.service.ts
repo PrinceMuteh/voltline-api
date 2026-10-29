@@ -21,6 +21,7 @@ import {
   ConnectorInputDto,
   CreateChargerDto,
   CreatedChargerDto,
+  MessageSearchDto,
   NetworkDto,
   UpdateChargerDto,
 } from './dto/charger.dto.js';
@@ -224,6 +225,11 @@ export class ChargersService {
     return this.detail(auth, id);
   }
 
+  async searchMessages(auth: AuthContext, id: string, f: MessageSearchDto) {
+    await this.find(auth, id);
+    return this.messages.search(id, f);
+  }
+
   async recentMessages(auth: AuthContext, id: string) {
     await this.find(auth, id);
     return this.messages.recent(id);
@@ -254,7 +260,14 @@ export class ChargersService {
   async sites(auth: AuthContext) {
     return this.prisma.site.findMany({
       where: { workspaceId: auth.workspaceId },
-      select: { id: true, name: true, area: true },
+      select: {
+        id: true,
+        name: true,
+        area: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+      },
       orderBy: { name: 'asc' },
     });
   }

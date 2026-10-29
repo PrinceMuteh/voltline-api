@@ -268,6 +268,37 @@ describe('OCPP gateway (e2e)', () => {
     expect(row.body.status).toBe('AVAILABLE');
   });
 
+  it('searches the OCPP log by text, action and direction', async () => {
+    const page = (query: string) =>
+      authed(
+        api().get(`/v1/console/chargers/${chargerId}/messages/search?${query}`),
+      ).expect(200);
+
+    const text = await page('q=Available');
+    expect(text.body.messages.length).toBeGreaterThan(0);
+    expect(
+      text.body.messages.every((m: { payload: object }) =>
+        JSON.stringify(m.payload).includes('Available'),
+      ),
+    ).toBe(true);
+    expect(text.body.actions).toEqual(
+      expect.arrayContaining(['BootNotification', 'StatusNotification']),
+    );
+
+    const ours = await page('action=UnlockConnector');
+    expect(ours.body.messages.map((m: { action: string }) => m.action)).toEqual(
+      ['UnlockConnector.conf', 'UnlockConnector'],
+    );
+    const outbound = await page('direction=OUTBOUND');
+    expect(
+      outbound.body.messages.every(
+        (m: { direction: string }) => m.direction === 'OUTBOUND',
+      ),
+    ).toBe(true);
+    // Wildcards in the search are literal
+    expect((await page('q=%25')).body.messages).toHaveLength(0);
+  });
+
   it('closes unknown charge points before upgrading', async () => {
     const stranger = new RPCClient({
       endpoint: `${base.replace('http', 'ws')}/ocpp`,

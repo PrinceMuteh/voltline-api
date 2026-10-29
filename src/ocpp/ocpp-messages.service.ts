@@ -11,6 +11,19 @@ export interface OcppMessageView {
   action: string;
   /** "Power.Active.Import 7.2 kW", "EVSE 1 · Available", "UnlockConnector.conf Accepted" … */
   summary: string;
+  /** The OCPP payload as the charger sent it (or as we sent it). */
+  payload: Record<string, unknown>;
+}
+
+export interface MessageSearch {
+  /** Free text over the action and the raw payload, e.g. "GroundFailure" or a transaction id. */
+  q?: string;
+  /** One action; its responses (Action.conf) are included. */
+  action?: string;
+  direction?: 'INBOUND' | 'OUTBOUND';
+  /** Cursor: only messages older than this ISO time. */
+  before?: string;
+  limit?: number;
 }
 
 type Json = Record<string, unknown>;
@@ -71,6 +84,37 @@ export class OcppMessagesService {
     return rows.map(toView);
   }
 
+  /** The searchable log (OC-12): newest first, 100 at a time, with a cursor for older pages. */
+  async search(chargerId: string, f: MessageSearch) {
+    const limit = Math.min(f.limit ?? 100, 200);
+    const like = f.q ? `%${f.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
+    const rows = await this.prisma.$queryRaw<OcppMessage[]>`
+      SELECT * FROM "OcppMessage"
+      WHERE "chargerId" = ${chargerId}
+        AND (${like}::text IS NULL OR action ILIKE ${like} OR payload::text ILIKE ${like})
+        AND (${f.action ?? null}::text IS NULL OR action = ${f.action ?? null} OR action = ${f.action ?? null} || '.conf')
+        AND (${f.direction ?? null}::text IS NULL OR direction::text = ${f.direction ?? null})
+        AND (${f.before ?? null}::timestamp IS NULL OR at < ${f.before ? new Date(f.before) : null}::timestamp)
+      ORDER BY at DESC
+      LIMIT ${limit + 1}`;
+    const page = rows.slice(0, limit);
+    const actions = f.before
+      ? []
+      : (
+          await this.prisma.ocppMessage.findMany({
+            where: { chargerId, NOT: { action: { endsWith: '.conf' } } },
+            distinct: ['action'],
+            select: { action: true },
+            orderBy: { action: 'asc' },
+          })
+        ).map((a) => a.action);
+    return {
+      messages: page.map(toView),
+      nextBefore: rows.length > limit ? page.at(-1)!.at.toISOString() : null,
+      actions,
+    };
+  }
+
   private save(
     session: ChargerSession,
     outbound: boolean,
@@ -105,6 +149,7 @@ function toView(row: OcppMessage): OcppMessageView {
     direction: row.direction,
     action: row.action,
     summary: summarize(row.action, (row.payload ?? {}) as Json),
+    payload: (row.payload ?? {}) as Json,
   };
 }
 

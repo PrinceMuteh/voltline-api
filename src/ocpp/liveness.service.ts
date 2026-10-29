@@ -11,8 +11,8 @@ import { ChargerStateService } from './charger-state.service.js';
 
 const SWEEP_EVERY_MS = 30_000;
 const PRUNE_EVERY_MS = 60 * 60_000;
-/** The drawer's message log is short-term. */
-const KEEP_MESSAGES_DAYS = 7;
+/** OCPP message log retention (PRD OC-12: 90 days). */
+const KEEP_MESSAGES_DAYS = 90;
 
 /**
  * Marks approved chargers offline when nothing has arrived within the workspace's window
