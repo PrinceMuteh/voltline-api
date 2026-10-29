@@ -118,7 +118,7 @@ export class LinkCardDto {
 
 // ─── Stations ────────────────────────────────────────────────────────────────
 
-class ConnectorDto {
+class StationConnectorDto {
   @ApiProperty() chargerId: string;
   @ApiProperty({ example: 'CP-0021' }) chargePointId: string;
   @ApiProperty() evseId: number;
@@ -138,7 +138,7 @@ class ConnectorDto {
   status: string;
 }
 
-class PriceDto {
+class StationPriceDto {
   @ApiProperty({ example: 'Standard DC' }) name: string;
   @ApiProperty({ example: 30000 }) perKwhKobo: number;
   @ApiProperty() sessionFeeKobo: number;
@@ -169,8 +169,8 @@ export class StationDto {
     description: 'Minutes since the site was last heard from, when offline',
   })
   offlineMinutes: number | null;
-  @ApiProperty({ type: PriceDto, nullable: true }) price: PriceDto | null;
-  @ApiProperty({ type: [ConnectorDto] }) connectors: ConnectorDto[];
+  @ApiProperty({ type: StationPriceDto, nullable: true }) price: StationPriceDto | null;
+  @ApiProperty({ type: [StationConnectorDto] }) connectors: StationConnectorDto[];
 }
 
 // ─── Charging ────────────────────────────────────────────────────────────────
