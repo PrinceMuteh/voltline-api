@@ -45,6 +45,29 @@ export class LocalListService {
     return this.sync(chargerId);
   }
 
+  /**
+   * After a card or driver change: sends the new list to every connected charger in the
+   * workspace when Settings › OCPP › sync is on. Runs in the background; returns how many.
+   */
+  async syncWorkspace(workspaceId: string) {
+    const settings = await this.prisma.ocppSettings.findUnique({
+      where: { workspaceId },
+    });
+    if (settings && !settings.syncLocalLists) return 0;
+    const chargers = await this.prisma.charger.findMany({
+      where: { workspaceId, id: { in: this.registry.connectedIds() } },
+      select: { id: true, chargePointId: true },
+    });
+    for (const c of chargers) {
+      this.sync(c.id).catch((error: unknown) =>
+        this.logger.warn(
+          `SendLocalList to ${c.chargePointId}: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }
+    return chargers.length;
+  }
+
   /** Builds the list from active cards whose driver is not blocked, and sends it. */
   async sync(chargerId: string): Promise<LocalListResult> {
     const client = this.registry.get(chargerId);
@@ -70,18 +93,23 @@ export class LocalListService {
           ? {
               versionNumber: version,
               updateType: 'Full',
-              localAuthorizationList: cards.map((c) => ({
-                idToken: { idToken: c.uid, type: 'ISO14443' },
-                idTokenInfo: { status: 'Accepted' },
-              })),
+              // The schemas allow no empty list: a Full update without one clears it
+              ...(cards.length && {
+                localAuthorizationList: cards.map((c) => ({
+                  idToken: { idToken: c.uid, type: 'ISO14443' },
+                  idTokenInfo: { status: 'Accepted' },
+                })),
+              }),
             }
           : {
               listVersion: version,
               updateType: 'Full',
-              localAuthorizationList: cards.map((c) => ({
-                idTag: c.uid,
-                idTagInfo: { status: 'Accepted' },
-              })),
+              ...(cards.length && {
+                localAuthorizationList: cards.map((c) => ({
+                  idTag: c.uid,
+                  idTagInfo: { status: 'Accepted' },
+                })),
+              }),
             },
         { callTimeoutMs: TIMEOUT_MS },
       )) as { status: string };

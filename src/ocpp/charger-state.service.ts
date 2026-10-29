@@ -45,6 +45,8 @@ export class ChargerStateService {
     { key: 'socket' | 'credentials'; detail: string }
   >();
   private readonly authDetails = new Map<string, string>();
+  /** Console dialogs waiting for a card to be tapped on a charger ("Read on a charger"). */
+  private readonly cardWaiters = new Map<string, Set<(uid: string) => void>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -255,6 +257,32 @@ export class ChargerStateService {
     return Boolean(
       card?.active && (!card.driver || card.driver.status === 'ACTIVE'),
     );
+  }
+
+  /** Called for every Authorize, so a console waiting on this charger gets the UID. */
+  cardPresented(chargerId: string, uid: string) {
+    const waiters = this.cardWaiters.get(chargerId);
+    if (!waiters) return;
+    this.cardWaiters.delete(chargerId);
+    for (const resolve of waiters) resolve(uid);
+  }
+
+  /** The UID of the next card tapped on this charger, or null after `timeoutMs`. */
+  nextCard(chargerId: string, timeoutMs: number) {
+    return new Promise<string | null>((resolve) => {
+      const waiters = this.cardWaiters.get(chargerId) ?? new Set();
+      this.cardWaiters.set(chargerId, waiters);
+      const done = (uid: string | null) => {
+        clearTimeout(timer);
+        waiters.delete(done);
+        if (!waiters.size && this.cardWaiters.get(chargerId) === waiters) {
+          this.cardWaiters.delete(chargerId);
+        }
+        resolve(uid);
+      };
+      const timer = setTimeout(() => done(null), timeoutMs);
+      waiters.add(done);
+    });
   }
 
   // ─── Add a charger checklist ──────────────────────────────────────────────

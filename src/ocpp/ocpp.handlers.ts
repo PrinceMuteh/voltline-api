@@ -180,6 +180,7 @@ export function registerHandlers(
                 };
           },
           Authorize: async (p) => {
+            state.cardPresented(s.chargerId, p.idToken.idToken);
             const ok = await state.isAuthorized(
               s.workspaceId,
               p.idToken.idToken,
@@ -258,13 +259,16 @@ export function registerHandlers(
             }
             return {};
           },
-          Authorize: async (p) => ({
-            idTagInfo: {
-              status: (await state.isAuthorized(s.workspaceId, p.idTag))
-                ? 'Accepted'
-                : 'Invalid',
-            },
-          }),
+          Authorize: async (p) => {
+            state.cardPresented(s.chargerId, p.idTag);
+            return {
+              idTagInfo: {
+                status: (await state.isAuthorized(s.workspaceId, p.idTag))
+                  ? 'Accepted'
+                  : 'Invalid',
+              },
+            };
+          },
           StartTransaction: async (p) => {
             const authorized = await state.isAuthorized(s.workspaceId, p.idTag);
             const idTagInfo = { status: authorized ? 'Accepted' : 'Invalid' };

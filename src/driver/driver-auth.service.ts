@@ -104,7 +104,13 @@ export class DriverAuthService {
     const driver =
       existing ??
       (await this.prisma.driver.create({
-        data: { workspaceId, phone, plugTypes: ['CCS2'] },
+        // The wallet marks them as an app user in the console's Drivers list
+        data: {
+          workspaceId,
+          phone,
+          plugTypes: ['CCS2'],
+          wallet: { create: {} },
+        },
       }));
     const payload: DriverTokenPayload = {
       typ: 'driver',
