@@ -18,21 +18,24 @@ export class OcppSettingsDto {
 }
 
 export class OcppSettingsInputDto {
-  @IsBoolean() accept16J: boolean;
-  @IsBoolean() accept201: boolean;
-  @IsBoolean() autoApproveChargers: boolean;
-  @IsBoolean() syncLocalLists: boolean;
+  @ApiProperty() @IsBoolean() accept16J: boolean;
+  @ApiProperty() @IsBoolean() accept201: boolean;
+  @ApiProperty() @IsBoolean() autoApproveChargers: boolean;
+  @ApiProperty() @IsBoolean() syncLocalLists: boolean;
 
+  @ApiProperty({ minimum: 30, maximum: 3600 })
   @IsInt({ message: 'Heartbeat interval is whole seconds.' })
   @Min(30)
   @Max(3600)
   heartbeatIntervalSec: number;
 
+  @ApiProperty({ minimum: 10, maximum: 900 })
   @IsInt({ message: 'Meter interval is whole seconds.' })
   @Min(10)
   @Max(900)
   meterValuesSampleSec: number;
 
+  @ApiProperty({ minimum: 2, maximum: 240 })
   @IsInt({ message: 'Offline alert delay is whole minutes.' })
   @Min(2)
   @Max(240)
