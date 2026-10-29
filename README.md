@@ -37,7 +37,7 @@ npm run sim -- --id CP-0045 --password <pw> --protocol 1.6 --state charging
 npm run sim:fleet                                     # the seeded demo chargers (password SIM_CHARGER_PASSWORD)
 ```
 
-It answers TriggerMessage, Reset (a soft reset is rejected while faulted), UnlockConnector and remote start/stop. Charging chargers run real sessions: an RFID tap, metering to a target, idle (SuspendedEV), unplug, then the next car. In the fleet, CP-0007, CP-0021 and CP-0035 do this continuously, so Sessions, Overview energy and revenue fill up live.
+It answers TriggerMessage, Reset (a soft reset is rejected while faulted), UnlockConnector, remote start/stop, ChangeAvailability, Get/SetVariables and Get/ChangeConfiguration, ReserveNow/CancelReservation (with expiry) and SendLocalList. DC chargers report battery %. Charging chargers run real sessions: an RFID tap, metering to a target, idle (SuspendedEV), unplug, then the next car. In the fleet, CP-0007, CP-0021 and CP-0035 do this continuously, so Sessions, Overview energy and revenue fill up live.
 
 ## Sessions and billing
 
@@ -78,6 +78,10 @@ src/
   sessions/    session recorder (OCPP → sessions), Sessions list, detail and CSV export
   tariffs/     tariffs with versioning, and the price preview
   realtime/    Socket.IO /console namespace; browsers join with a 60 s ticket
+  sites/       sites (address, map position, grid limit)
+  settings/    Settings › OCPP
+  driver/      the driver app API (/v1/app/*): phone sign-in, stations, QR lookup,
+               start/stop sent straight to the charger, live session, history, cards
   health/      GET /v1/health
   prisma/      PrismaService (pg driver adapter)
   config/      environment validation
@@ -96,5 +100,9 @@ scripts/sim/      development charger simulator
 - Auth tokens travel only in httpOnly cookies (`vl_access` 15 min, `vl_refresh` 30 days, rotated on each refresh; replaying an old refresh token revokes all of that user's tokens). `Authorization: Bearer` is also accepted for mobile and partner clients.
 - After changing a controller or DTO, run `npm run gen:api` in voltline-web to refresh its typed client.
 - Only `ocpp.handlers.ts` knows about protocol versions; everything after it works on translated events.
+- Console commands also cover remote stop, ChangeAvailability and live charger settings; reservations (OC-10) and the offline RFID list (OC-09, sent on connect when Settings › OCPP › Sync is on) have their own endpoints.
+- The OCPP message log is searchable (`/console/chargers/:id/messages/search`) and kept 90 days.
+- Driver app: sign-in codes are hashed, valid 5 minutes, 5 tries; outside production the code is returned to the app because no SMS provider is set up, and in production sending is refused until one is. The app serves one workspace (`DRIVER_APP_WORKSPACE`). Driver starts and stops are never queued: an offline charger or a missing answer is reported at once. Sessions stop by themselves at the driver's auto-stop budget.
+- An EVSE runs one transaction at a time: a session left open when a new one starts on the same EVSE is closed at its last reading and billed for what it delivered.
 - Remote commands wait up to 30 s for the charger. Unanswered or offline ones stay queued and are sent when it reconnects (dropped after 24 h).
 - Single instance for now: open sockets, power-now readings and the last-message time live in memory. Running several API instances needs them moved to Redis (planned with the scale work).
