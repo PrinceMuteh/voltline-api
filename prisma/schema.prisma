@@ -1,0 +1,615 @@
+// Voltline data model v1. See the build plan, section "Data model".
+// Money is stored as integer kobo (1 NGN = 100 kobo). Energy as watt-hours.
+// Every operator-owned row carries workspaceId so tenants stay isolated.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Tenancy ────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  OPERATOR
+  SUPPORT
+  FINANCE
+  SITE_HOST
+}
+
+enum ChargerCountBand {
+  ONE_TO_TEN
+  ELEVEN_TO_FIFTY
+  FIFTY_ONE_PLUS
+}
+
+model Workspace {
+  id                    String            @id @default(uuid())
+  name                  String
+  registeredCompanyName String?
+  country               String            @default("NG")
+  currency              String            @default("NGN")
+  timeZone              String            @default("Africa/Lagos")
+  chargerCountBand      ChargerCountBand?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  members    Member[]
+  invites    Invite[]
+  sites      Site[]
+  siteHosts  SiteHost[]
+  chargers   Charger[]
+  tariffs    Tariff[]
+  drivers    Driver[]
+  fleets     Fleet[]
+  idTokens   IdToken[]
+  sessions   Session[]
+  ocppConfig OcppSettings?
+  alerts     Alert[]
+  auditLogs  AuditLog[]
+  gateway    PaymentGatewayConfig?
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships   Member[]
+  refreshTokens RefreshToken[]
+}
+
+model Member {
+  id          String   @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        Role
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Site hosts only see these sites
+  sites     Site[]    @relation("MemberSites")
+
+  @@unique([workspaceId, userId])
+}
+
+model Invite {
+  id          String    @id @default(uuid())
+  workspaceId String
+  email       String
+  role        Role
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ─── Places ─────────────────────────────────────────────────────────────────
+
+model SiteHost {
+  id                String   @id @default(uuid())
+  workspaceId       String
+  name              String
+  revenueShareBps   Int // 2000 = 20%
+  payoutAccountName String?
+  payoutAccountNo   String?
+  payoutBankCode    String?
+  createdAt         DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sites     Site[]
+
+  @@index([workspaceId])
+}
+
+model Site {
+  id           String   @id @default(uuid())
+  workspaceId  String
+  siteHostId   String?
+  name         String
+  area         String?
+  address      String?
+  latitude     Float?
+  longitude    Float?
+  openingHours String   @default("Open 24 hours")
+  createdAt    DateTime @default(now())
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  siteHost  SiteHost?    @relation(fields: [siteHostId], references: [id])
+  chargers  Charger[]
+  tariffs   TariffSite[]
+  members   Member[]     @relation("MemberSites")
+
+  @@unique([workspaceId, name])
+}
+
+// ─── Hardware ───────────────────────────────────────────────────────────────
+
+enum OcppProtocol {
+  OCPP16J
+  OCPP201
+  OCPP21
+}
+
+enum ApprovalState {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum ChargerStatus {
+  AVAILABLE
+  CHARGING
+  FAULTED
+  OFFLINE
+  UNAVAILABLE
+}
+
+enum ConnectorType {
+  CCS2
+  TYPE2
+  CHADEMO
+}
+
+model Charger {
+  id              String        @id @default(uuid())
+  workspaceId     String
+  siteId          String
+  chargePointId   String // e.g. CP-0052; last segment of the OCPP URL
+  vendor          String?
+  model           String?
+  firmwareVersion String?
+  protocol        OcppProtocol?
+  securityProfile Int           @default(2)
+  approval        ApprovalState @default(PENDING)
+  status          ChargerStatus @default(OFFLINE)
+  lastSeenAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  site        Site                @relation(fields: [siteId], references: [id])
+  evses       Evse[]
+  credentials ChargerCredential[]
+  sessions    Session[]
+  messages    OcppMessage[]
+  commands    RemoteCommand[]
+
+  // Unique across the platform: the gateway resolves a charger from its URL alone
+  @@unique([chargePointId])
+  @@index([workspaceId, status])
+}
+
+model Evse {
+  id        String @id @default(uuid())
+  chargerId String
+  evseId    Int // OCPP EVSE number, 1-based
+
+  charger    Charger     @relation(fields: [chargerId], references: [id], onDelete: Cascade)
+  connectors Connector[]
+
+  @@unique([chargerId, evseId])
+}
+
+model Connector {
+  id          String        @id @default(uuid())
+  evseDbId    String
+  connectorId Int           @default(1)
+  type        ConnectorType
+  maxPowerW   Int
+  status      ChargerStatus @default(OFFLINE)
+
+  evse     Evse      @relation(fields: [evseDbId], references: [id], onDelete: Cascade)
+  sessions Session[]
+
+  @@unique([evseDbId, connectorId])
+}
+
+model ChargerCredential {
+  id           String    @id @default(uuid())
+  chargerId    String
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+
+  charger Charger @relation(fields: [chargerId], references: [id], onDelete: Cascade)
+
+  @@index([chargerId])
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model OcppMessage {
+  id        String           @id @default(uuid())
+  chargerId String
+  direction MessageDirection
+  action    String
+  payload   Json
+  at        DateTime         @default(now())
+
+  charger Charger @relation(fields: [chargerId], references: [id], onDelete: Cascade)
+
+  @@index([chargerId, at])
+}
+
+enum CommandStatus {
+  QUEUED
+  SENT
+  ACCEPTED
+  REJECTED
+  TIMED_OUT
+  CANCELLED
+}
+
+model RemoteCommand {
+  id          String        @id @default(uuid())
+  chargerId   String
+  action      String // e.g. UnlockConnector, Reset
+  payload     Json
+  status      CommandStatus @default(QUEUED)
+  response    Json?
+  requestedBy String? // Member id
+  createdAt   DateTime      @default(now())
+  completedAt DateTime?
+
+  charger Charger @relation(fields: [chargerId], references: [id], onDelete: Cascade)
+
+  @@index([chargerId, status])
+}
+
+model OcppSettings {
+  workspaceId          String  @id
+  accept16J            Boolean @default(true)
+  accept201            Boolean @default(true)
+  accept21             Boolean @default(false)
+  autoApproveChargers  Boolean @default(false)
+  syncLocalLists       Boolean @default(true)
+  heartbeatIntervalSec Int     @default(300)
+  meterValuesSampleSec Int     @default(60)
+  offlineAlertAfterMin Int     @default(10)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// ─── People and access ──────────────────────────────────────────────────────
+
+enum DriverStatus {
+  ACTIVE
+  BLOCKED
+  PAYMENT_OVERDUE
+}
+
+model Driver {
+  id          String          @id @default(uuid())
+  workspaceId String
+  name        String?
+  phone       String // E.164, e.g. +2348030004412
+  email       String?
+  plugTypes   ConnectorType[]
+  status      DriverStatus    @default(ACTIVE)
+  fleetId     String?
+  createdAt   DateTime        @default(now())
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  fleet     Fleet?         @relation(fields: [fleetId], references: [id])
+  idTokens  IdToken[]
+  sessions  Session[]
+  wallet    WalletAccount?
+
+  @@unique([workspaceId, phone])
+}
+
+model Fleet {
+  id          String   @id @default(uuid())
+  workspaceId String
+  name        String
+  invoiceDay  Int      @default(1)
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  drivers   Driver[]
+  idTokens  IdToken[]
+  sessions  Session[]
+  tariffs   Tariff[]
+}
+
+model IdToken {
+  id             String   @id @default(uuid())
+  workspaceId    String
+  uid            String // RFID card UID, e.g. 04:A2:1C:9F
+  driverId       String?
+  fleetId        String?
+  dailyLimitKobo Int?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  driver    Driver?   @relation(fields: [driverId], references: [id])
+  fleet     Fleet?    @relation(fields: [fleetId], references: [id])
+  sessions  Session[]
+
+  @@unique([workspaceId, uid])
+}
+
+// ─── Pricing ────────────────────────────────────────────────────────────────
+
+model Tariff {
+  id                String    @id @default(uuid())
+  workspaceId       String
+  name              String
+  version           Int       @default(1)
+  perKwhKobo        Int
+  perMinuteKobo     Int       @default(0)
+  sessionFeeKobo    Int       @default(0)
+  idleGraceMin      Int?
+  idlePerMinuteKobo Int?
+  peakFrom          String? // "18:00", site local time
+  peakTo            String? // "22:00"
+  peakSurchargeBps  Int? // 1500 = 15%
+  vatIncluded       Boolean   @default(true)
+  vatBps            Int       @default(750) // 7.5%
+  archivedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  /// Only this fleet's sessions use it (e.g. "GreenRide fleet"); null = everyone
+  fleetId           String?
+  /// Earlier version this one replaced; editing a tariff in use creates a new version
+  previousId        String?
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  fleet     Fleet?       @relation(fields: [fleetId], references: [id])
+  sites     TariffSite[]
+  sessions  Session[]
+
+  @@index([workspaceId])
+}
+
+model TariffSite {
+  tariffId String
+  siteId   String
+
+  tariff Tariff @relation(fields: [tariffId], references: [id], onDelete: Cascade)
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@id([tariffId, siteId])
+}
+
+// ─── Charging ───────────────────────────────────────────────────────────────
+
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+  STOPPED_BY_FAULT
+  PAYMENT_FAILED
+  REFUNDED
+}
+
+model Session {
+  id              String        @id @default(uuid())
+  workspaceId     String
+  reference       String        @unique // S-10482
+  chargerId       String
+  connectorId     String?
+  transactionId   String // as reported by the charger
+  driverId        String?
+  idTokenId       String?
+  fleetId         String?
+  tariffId        String?
+  status          SessionStatus @default(ACTIVE)
+  startedAt       DateTime
+  chargingEndedAt DateTime?
+  endedAt         DateTime?
+  energyWh        Int           @default(0)
+  amountKobo      Int           @default(0)
+  stopReason      String?
+  /// Energy register at start, so energyWh = register - meterStartWh
+  meterStartWh    Int?
+  /// The token the charger reported (RFID UID or the console's remote-start tag)
+  idTag           String?
+  /// Price breakdown from the pricing function, frozen when the session ends
+  billing         Json?
+  createdAt       DateTime      @default(now())
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  charger   Charger        @relation(fields: [chargerId], references: [id])
+  connector Connector?     @relation(fields: [connectorId], references: [id])
+  driver    Driver?        @relation(fields: [driverId], references: [id])
+  idToken   IdToken?       @relation(fields: [idTokenId], references: [id])
+  fleet     Fleet?         @relation(fields: [fleetId], references: [id])
+  tariff    Tariff?        @relation(fields: [tariffId], references: [id])
+  samples   MeterSample[]
+  events    SessionEvent[]
+  payments  Transaction[]
+
+  // A replayed TransactionEvent after a reconnect maps to the same session
+  @@unique([chargerId, transactionId])
+  @@index([workspaceId, startedAt])
+}
+
+model MeterSample {
+  id        String   @id @default(uuid())
+  sessionId String
+  at        DateTime
+  powerW    Int?
+  energyWh  Int
+  socPct    Int?
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, at])
+}
+
+model SessionEvent {
+  id             String   @id @default(uuid())
+  sessionId      String
+  // Idempotency key: 2.0.1 seqNo, or a hash of the 1.6J message
+  idempotencyKey String
+  type           String // Authorized, Started, SuspendedEV, Ended…
+  detail         String?
+  at             DateTime
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, idempotencyKey])
+}
+
+// ─── Money ──────────────────────────────────────────────────────────────────
+
+enum TransactionType {
+  PRE_AUTHORIZATION
+  CAPTURE
+  TOP_UP
+  REFUND
+}
+
+enum PaymentMethod {
+  CARD
+  WALLET
+  BANK_TRANSFER
+  USSD
+  FLEET_INVOICE
+}
+
+enum TransactionStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  CREDITED
+  FAILED
+  REFUNDED
+  RELEASED
+}
+
+model Transaction {
+  id             String            @id @default(uuid())
+  workspaceId    String
+  reference      String            @unique // TX-88213
+  type           TransactionType
+  method         PaymentMethod
+  status         TransactionStatus @default(PENDING)
+  amountKobo     Int
+  sessionId      String?
+  driverId       String?
+  cardLast4      String?
+  gatewayRef     String?
+  idempotencyKey String?           @unique
+  failureReason  String?
+  attempts       Int               @default(0)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  session Session? @relation(fields: [sessionId], references: [id])
+
+  @@index([workspaceId, createdAt])
+}
+
+model WalletAccount {
+  id           String   @id @default(uuid())
+  driverId     String   @unique
+  balanceKobo  Int      @default(0)
+  reservedKobo Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  driver  Driver        @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  entries LedgerEntry[]
+}
+
+model LedgerEntry {
+  id            String   @id @default(uuid())
+  walletId      String
+  amountKobo    Int // positive = credit, negative = debit
+  kind          String // TOP_UP, RESERVE, RELEASE, CAPTURE, REFUND
+  transactionId String?
+  createdAt     DateTime @default(now())
+
+  wallet WalletAccount @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt])
+}
+
+model PaymentGatewayConfig {
+  workspaceId     String   @id
+  provider        String? // filled once [YOUR PAYMENT GATEWAY] is chosen
+  preAuthHoldKobo Int      @default(500000) // ₦5,000
+  minTopUpKobo    Int      @default(100000) // ₦1,000
+  connected       Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// ─── Operations ─────────────────────────────────────────────────────────────
+
+enum AlertType {
+  CHARGER_OFFLINE
+  CHARGER_FAULTED
+  FIRMWARE_AVAILABLE
+  PAYMENT_FAILED
+}
+
+model Alert {
+  id          String    @id @default(uuid())
+  workspaceId String
+  type        AlertType
+  chargerId   String?
+  title       String
+  detail      String?
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, resolvedAt])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  workspaceId String
+  memberId    String?
+  action      String
+  target      String?
+  detail      Json?
+  at          DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, at])
+}
+
+model Lead {
+  id        String   @id @default(uuid())
+  source    String // flex-home, voltline-demo
+  name      String?
+  email     String
+  interest  String?
+  message   String?
+  createdAt DateTime @default(now())
+}

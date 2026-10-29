@@ -1,0 +1,30 @@
+# compiled output
+/dist
+/node_modules
+/build
+/src/generated
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs
+logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# tests
+/coverage
+/.nyc_output
+
+# IDE
+/.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+*.tsbuildinfo
